@@ -5,29 +5,51 @@ let video;
 let audioChart;
 let lightChart;
 let isRecording = false;
+let audioBuffer = [];
+let lightBuffer = [];
+let lastAudioValue = null;
+let lastLightValue = null;
+let sendDataInterval;
+
+function getDeviceId() {
+    let deviceId = localStorage.getItem('deviceId');
+    if (!deviceId) {
+        deviceId = 'device-' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('deviceId', deviceId);
+    }
+    return deviceId;
+}
+
+const deviceId = getDeviceId();
 
 document.getElementById('startRecording').onclick = async function() {
     try {
+        if (audioChart) {
+            audioChart.destroy();
+        }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: 'environment' } });
         console.log('Мікрофон і камера активовані');
         document.getElementById('stopRecording').disabled = false;
+        this.disabled = true
         audioContext = new AudioContext();
         source = audioContext.createMediaStreamSource(stream);
         analyser = audioContext.createAnalyser();
         source.connect(analyser);
         analyser.fftSize = 2048;
+        isRecording = true;
 
         const bufferLength = analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-        let audioData = [];
-        let isRecording = true;
-
+        const dataArray = new Uint8Array(bufferLength); // Масив інтенсивностей частот
         const audioCtx = document.getElementById('audioCanvas').getContext('2d');
         audioChart = new Chart(audioCtx, {
-            type: 'line',
+            type: 'bar',
             data: {
-                labels: Array.from({length: bufferLength}, (_, i) => i),
-                datasets: [{ label: 'Audio Level', data: [], borderColor: 'rgb(75, 192, 192)', borderWidth: 1 }]
+                labels: ['Average Frequency Amplitude'], // Тепер мітка одна
+                datasets: [{
+                    label: 'Average Audio Level',
+                    data: [0],
+                    borderColor: 'rgb(75, 192, 192)'
+                }]
             },
             options: {
                 scales: { y: { beginAtZero: true } },
@@ -35,32 +57,34 @@ document.getElementById('startRecording').onclick = async function() {
             }
         });
 
-        function record() {
+        function recordAudio() {
             if (!isRecording) {
                 return;
             }
-            requestAnimationFrame(record);
+            requestAnimationFrame(recordAudio);
             analyser.getByteFrequencyData(dataArray);
-            audioData.push([...dataArray]);
-            audioChart.data.datasets[0].data = dataArray;
-            audioChart.update();
 
-            if (audioData.length >= 100) {
-                fetch('https://your-external-server.com/api/audio-data', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ data: audioData })
-                })
-                    .then(response => response.json())
-                    .then(data => console.log('Audio data sent successfully'))
-                    .catch((error) => console.error('Error:', error));
+            let newAverageAmplitude = dataArray.reduce((acc, val) => acc + val, 0) / dataArray.length;
 
-                audioData = [];
+            if (hasSignificantChange(newAverageAmplitude, lastAudioValue, 0.1)) {
+                const audioDataWithDeviceId = {
+                    deviceId: deviceId,
+                    averageAudioAmplitude: newAverageAmplitude,
+                    timestamp: new Date().toISOString()
+                };
+                audioBuffer.push(audioDataWithDeviceId);
+                lastAudioValue = newAverageAmplitude;
+
+                audioChart.data.datasets[0].data = [newAverageAmplitude];
+                audioChart.update();
             }
         }
 
-        record();
+        recordAudio();
 
+        if (lightChart) {
+            lightChart.destroy();
+        }
         video = document.createElement('video');
         video.srcObject = stream;
         video.play();
@@ -82,7 +106,7 @@ document.getElementById('startRecording').onclick = async function() {
         });
 
         function measureLight() {
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            if (video.readyState === video.HAVE_ENOUGH_DATA && isRecording) {
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -93,41 +117,82 @@ document.getElementById('startRecording').onclick = async function() {
                     totalLight += (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3;
                     count++;
                 }
-                const averageLight = totalLight / count;
-                lightChart.data.datasets[0].data = [averageLight];
-                lightChart.update();
+                const newAverageLightValue  = totalLight / count;
+                if (hasSignificantChange(newAverageLightValue, lastLightValue, 0.1)) {
+                    const lightDataWithDeviceId = {
+                        deviceId: deviceId,
+                        lightLevel: newAverageLightValue,
+                        timestamp: new Date().toISOString()
+                    };
+                    lightBuffer.push(lightDataWithDeviceId);
+                    lastLightValue = newAverageLightValue;
 
-                // Sending light data to the server
-                fetch('https://your-external-server.com/api/light-data', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ lightLevel: averageLight })
-                })
-                    .then(response => response.json())
-                    .then(data => console.log('Light data sent successfully'))
-                    .catch((error) => console.error('Error sending light data:', error));
+                    lightChart.data.datasets[0].data = [newAverageLightValue];
+                    lightChart.update();
+                }
             }
             requestAnimationFrame(measureLight);
         }
 
         measureLight();
+
+
+        sendDataInterval = setInterval(() => {
+            if (audioBuffer.length) {
+                sendData(audioBuffer, '/api/audio');
+                audioBuffer = [];
+                lastAudioValue = null;
+            }
+            if (lightBuffer.length) {
+                sendData(lightBuffer, '/api/light');
+                lightBuffer = [];
+                lastLightValue = null;
+            }
+        }, 15000);
+
     } catch (error) {
-        console.error('Error accessing microphone or camera:', error);
+        console.error('Помилка доступу до мікрофону або камери:', error);
     }
 };
 
 document.getElementById('stopRecording').onclick = function() {
-    audioContext.close().then(() => {
-        console.log('Аудіозапис зупинено');
-    });
+    isRecording = false;  // Деактивація стану запису
+    audioContext.close();
 
     if (video.srcObject) {
         const tracks = video.srcObject.getTracks();
         tracks.forEach(track => track.stop());
         video.srcObject = null;
     }
-
-    // Деактивувати кнопку "Зупинити запис" після зупинки потоків
+    document.getElementById('startRecording').disabled = false
     this.disabled = true;
     console.log('Запис зупинено');
+    sendData(audioBuffer, '/api/audio');
+    sendData(lightBuffer, '/api/light');
+    audioBuffer = [];
+    lightBuffer = [];
+    clearInterval(sendDataInterval);
 };
+
+function sendData(buffer, url) {
+    const payload = JSON.stringify({data: buffer});
+    console.log(payload);  // Логування відправленого JSON
+    fetch('http://localhost:8080' + url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok: ' + response.statusText);
+            }
+            console.log('Data sent successfully:', response.status);
+        })
+        .catch(error => console.error('Error sending data:', error));
+}
+
+function hasSignificantChange(newVal, lastVal, threshold = 0.1) {
+    if (lastVal === null) return true;
+    const change = Math.abs(newVal - lastVal);
+    return change >= (threshold * lastVal);
+}
