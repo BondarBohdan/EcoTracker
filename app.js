@@ -51,7 +51,7 @@ function arrayBufferToBase64(arrayBuffer) {
 }
 
 if ('serviceWorker' in navigator && 'PushManager' in window) {
-    navigator.serviceWorker.register('EcoTracker/serviceWorker.js').then(registration => {
+    navigator.serviceWorker.register('/EcoTracker/serviceWorker.js').then(registration => {
         console.log('Service Worker зареєстровано', registration);
 
         return registration.pushManager.subscribe({
