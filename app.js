@@ -150,7 +150,7 @@ document.getElementById('startRecording').onclick = async function() {
                 lightBuffer = [];
                 lastLightValue = null;
             }
-        }, 3000); //TODO
+        }, 10000);
 
     } catch (error) {
         console.error('Error accessing microphone or camera:', error);
