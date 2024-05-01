@@ -20,62 +20,9 @@ function getDeviceId() {
     return deviceId;
 }
 
-const backURL = 'https://ecotracker-back.onrender.com';
+const backURL = 'http://localhost:8080';
+// const backURL = 'https://ecotracker-back.onrender.com';
 const deviceId = getDeviceId();
-const publicKey = 'BDZwOg9BS_q2ptCYU_GZ41cBbiSmAeVWIsvlp550EtxMFdoJuW6i4Hm_YzfTM9jCxzdlMU4dE0r9NWblf5LxeZY';
-
-function urlBase64ToUint8Array(base64String) {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding)
-        .replace(/\-/g, '+')
-        .replace(/_/g, '/');
-
-    const rawData = window.atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-
-    for (let i = 0; i < rawData.length; ++i) {
-        outputArray[i] = rawData.charCodeAt(i);
-    }
-    return outputArray;
-}
-
-// Функція для конвертації ArrayBuffer у URL-безпечну base64-кодовану стрічку
-function arrayBufferToBase64(arrayBuffer) {
-    var binary = '';
-    var bytes = new Uint8Array(arrayBuffer);
-    var len = bytes.byteLength;
-    for (var i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
-    return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-if ('serviceWorker' in navigator && 'PushManager' in window) {
-    navigator.serviceWorker.register('serviceWorker.js').then(registration => {
-        console.log('Service Worker зареєстровано', registration);
-
-        return registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(publicKey)
-        });
-    }).then(subscription => {
-        var p256dh = arrayBufferToBase64(subscription.getKey('p256dh'));
-        var auth = arrayBufferToBase64(subscription.getKey('auth'));
-        fetch(backURL + '/api/subscribe', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                deviceId: deviceId,
-                endpoint: subscription.endpoint,
-                p256dh: p256dh,
-                auth: auth
-            })
-        }).then(() => console.log('Підписка відправлена на сервер'))
-            .catch(error => console.error('Помилка відправлення підписки', error));
-    }).catch(error => console.error('Помилка підписки на push повідомлення', error));
-} else {
-    console.warn('Push повідомлення не підтримуються цим браузером.');
-}
 
 document.getElementById('startRecording').onclick = async function() {
     try {
@@ -83,7 +30,6 @@ document.getElementById('startRecording').onclick = async function() {
             audioChart.destroy();
         }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: 'environment' } });
-        console.log('Мікрофон і камера активовані');
         document.getElementById('stopRecording').disabled = false;
         this.disabled = true
         audioContext = new AudioContext();
@@ -92,6 +38,7 @@ document.getElementById('startRecording').onclick = async function() {
         source.connect(analyser);
         analyser.fftSize = 2048;
         isRecording = true;
+        startLongPolling()
 
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength); // Масив інтенсивностей частот
@@ -99,7 +46,7 @@ document.getElementById('startRecording').onclick = async function() {
         audioChart = new Chart(audioCtx, {
             type: 'bar',
             data: {
-                labels: ['Average Frequency Amplitude'], // Тепер мітка одна
+                labels: ['Average Frequency Amplitude'],
                 datasets: [{
                     label: 'Average Audio Level',
                     data: [0],
@@ -203,15 +150,15 @@ document.getElementById('startRecording').onclick = async function() {
                 lightBuffer = [];
                 lastLightValue = null;
             }
-        }, 15000);
+        }, 3000); //TODO
 
     } catch (error) {
-        console.error('Помилка доступу до мікрофону або камери:', error);
+        console.error('Error accessing microphone or camera:', error);
     }
 };
 
 document.getElementById('stopRecording').onclick = function() {
-    isRecording = false;  // Деактивація стану запису
+    isRecording = false;
     audioContext.close();
 
     if (video.srcObject) {
@@ -221,7 +168,6 @@ document.getElementById('stopRecording').onclick = function() {
     }
     document.getElementById('startRecording').disabled = false
     this.disabled = true;
-    console.log('Запис зупинено');
     sendData(audioBuffer, '/api/audio');
     sendData(lightBuffer, '/api/light');
     audioBuffer = [];
@@ -231,7 +177,6 @@ document.getElementById('stopRecording').onclick = function() {
 
 function sendData(buffer, url) {
     const payload = JSON.stringify({data: buffer});
-    console.log(payload);  // Логування відправленого JSON
     fetch(backURL + url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -241,7 +186,6 @@ function sendData(buffer, url) {
             if (!response.ok) {
                 throw new Error('Network response was not ok: ' + response.statusText);
             }
-            console.log('Data sent successfully:', response.status);
         })
         .catch(error => console.error('Error sending data:', error));
 }
@@ -251,3 +195,24 @@ function hasSignificantChange(newVal, lastVal, threshold = 0.1) {
     const change = Math.abs(newVal - lastVal);
     return change >= (threshold * lastVal);
 }
+
+function startLongPolling() {
+    if (!isRecording) return;
+
+    fetch(backURL + '/api/poll/' + deviceId, {
+        method: 'GET'
+    })
+        .then(response => {
+            if (response.status === 204) {
+                return null;
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data && data.message) {
+                alert('Received alert: ' + data.message);
+            }
+        })
+        .catch(error => console.error('Error fetching alert:', error));
+}
+setInterval(startLongPolling, 5000);
