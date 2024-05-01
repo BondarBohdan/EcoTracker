@@ -20,8 +20,8 @@ function getDeviceId() {
     return deviceId;
 }
 
-const backURL = 'http://localhost:8080';
-// const backURL = 'https://ecotracker-back.onrender.com';
+// const backURL = 'http://localhost:8080';
+const backURL = 'https://ecotracker-back.onrender.com';
 const deviceId = getDeviceId();
 
 document.getElementById('startRecording').onclick = async function() {
