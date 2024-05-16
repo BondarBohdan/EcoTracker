@@ -20,7 +20,6 @@ function getDeviceId() {
     return deviceId;
 }
 
-// const backURL = 'http://localhost:8080';
 const backURL = 'https://ecotracker-back.onrender.com';
 const deviceId = getDeviceId();
 
@@ -41,7 +40,7 @@ document.getElementById('startRecording').onclick = async function() {
         startLongPolling()
 
         const bufferLength = analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength); // Масив інтенсивностей частот
+        const dataArray = new Uint8Array(bufferLength);
         const audioCtx = document.getElementById('audioCanvas').getContext('2d');
         audioChart = new Chart(audioCtx, {
             type: 'bar',
@@ -190,14 +189,29 @@ function sendData(buffer, url) {
         .catch(error => console.error('Error sending data:', error));
 }
 
-function hasSignificantChange(newVal, lastVal, threshold = 0.1) {
+function hasSignificantChange(newVal, lastVal, threshold = 0.05) {
     if (lastVal === null) return true;
     const change = Math.abs(newVal - lastVal);
     return change >= (threshold * lastVal);
 }
 
+function playBeep(duration, frequency, volume) {
+    var oscillator = audioContext.createOscillator();
+    var gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    oscillator.frequency.value = frequency;
+    gainNode.gain.value = volume;
+
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + duration * 0.001);
+}
+
 function startLongPolling() {
     if (!isRecording) return;
+    var audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
     fetch(backURL + '/api/poll/' + deviceId, {
         method: 'GET'
@@ -210,6 +224,7 @@ function startLongPolling() {
         })
         .then(data => {
             if (data && data.message) {
+                playBeep(1000, 440, 1.0);
                 alert('Received alert: ' + data.message);
             }
         })
